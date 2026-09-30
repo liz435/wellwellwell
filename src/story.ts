@@ -1,0 +1,42 @@
+export const story = [
+  {
+    id: 'begin',
+    number: '01',
+    label: 'BEGIN',
+    title: 'Every story starts with a word.',
+    body: 'A thought leaves the quiet. It finds a shape, a voice, a place to land.',
+    word: 'WORD',
+  },
+  {
+    id: 'weight',
+    number: '02',
+    label: 'WEIGHT',
+    title: 'Some words carry weight.',
+    body: 'The things we say can move us. Pick one up. Feel what it changes.',
+    word: 'WEIGHT',
+  },
+  {
+    id: 'distance',
+    number: '03',
+    label: 'DISTANCE',
+    title: 'Some words pull us apart.',
+    body: 'Even silence leaves a space. A thread stretches across it, thin but unbroken.',
+    word: 'SPACE',
+  },
+  {
+    id: 'connection',
+    number: '04',
+    label: 'CONNECTION',
+    title: 'A thread brings us back.',
+    body: 'One word reaches another. The space between them starts to mean something.',
+    word: 'TOGETHER',
+  },
+  {
+    id: 'release',
+    number: '05',
+    label: 'RELEASE',
+    title: 'What will you set in motion?',
+    body: 'Every ending can begin again. The next word is yours.',
+    word: 'AGAIN',
+  },
+] as const
