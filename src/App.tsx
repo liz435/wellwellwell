@@ -1,102 +1,157 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
-import { motion, useScroll, useSpring, useTransform } from 'motion/react'
+import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
+import { motion, useMotionValue, useMotionValueEvent, useScroll, useTransform } from 'motion/react'
 import { story } from './story'
+import { useWellSound } from './useWellSound'
+import { OPENING_SCROLL_HEIGHT, openingSceneAt } from './openingSequence'
+import { SCENE_ANCHORS, sceneAtScroll, spatialPartitionAt } from './sceneTimeline'
 
 const StoryScene = lazy(() => import('./Scene').then((module) => ({ default: module.StoryScene })))
-
-function Chapter({ item, index, readingMode }: { item: (typeof story)[number]; index: number; readingMode: boolean }) {
-  const sectionRef = useRef<HTMLElement>(null)
-  const { scrollYProgress } = useScroll({ target: sectionRef, offset: ['start end', 'end start'] })
-  const opacity = useTransform(scrollYProgress, [0.12, 0.3, 0.72, 0.9], [0.25, 1, 1, 0.2])
-  const y = useTransform(scrollYProgress, [0.12, 0.3, 0.72, 0.9], [28, 0, 0, -18])
-  const dark = index === 2
-  return <section ref={sectionRef} id={item.id} className={`chapter chapter-${item.id} ${dark ? 'chapter-dark' : ''}`} aria-labelledby={`${item.id}-title`}>
-    <div className={`chapter-sticky chapter-layout-${index + 1}`}>
-      <div className="chapter-copy">
-        <div className="chapter-kicker"><span>{item.number}</span><span className="kicker-line" /><span>{item.label}</span></div>
-        <motion.div className="chapter-words" style={readingMode ? undefined : { opacity, y }}>
-          <h2 id={`${item.id}-title`}>{item.title}</h2>
-          <p>{item.body}</p>
-          {index === 1 && <button className="inline-action focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#b83b27]" type="button" onClick={() => window.dispatchEvent(new Event('thread:push'))}>
-            <span className="action-dot" />Push a word · or drag a letter
-          </button>}
-          {index === 4 && <button className="restart-button" type="button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-            Start again <span aria-hidden="true">↗</span>
-          </button>}
-        </motion.div>
-      </div>
-      <div className="chapter-side" aria-hidden="true"><span>{item.word}</span><span className="side-index">THREAD / 0{index + 1}</span></div>
-    </div>
-  </section>
-}
-
-function ReadingMode({ onChange, enabled }: { onChange: () => void; enabled: boolean }) {
-  return <aside className="reading-panel" aria-label="Reading options">
-    <button type="button" onClick={onChange} aria-pressed={enabled} className="reading-toggle">
-      <span className="toggle-icon" aria-hidden="true">{enabled ? 'Aa' : '◉'}</span>
-      <span>{enabled ? 'Motion on' : 'Read the story'}</span>
-    </button>
-    <a href="#begin" className="top-link" aria-label="Back to beginning">↑</a>
-  </aside>
+function StillWell() { return <div className="still-well" aria-hidden="true"><span>井</span></div> }
+class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() { return { failed: true } }
+  render() { return this.state.failed ? <StillWell /> : this.props.children }
 }
 
 export default function App() {
-  const pageRef = useRef<HTMLElement>(null)
-  const [activeId, setActiveId] = useState<string>(story[0].id)
-  const [readingMode, setReadingMode] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
-  const { scrollYProgress } = useScroll({ target: pageRef, offset: ['start start', 'end end'] })
-  const smoothProgress = useSpring(scrollYProgress, { stiffness: 80, damping: 24, mass: 0.35 })
-  const progressWidth = useTransform(scrollYProgress, [0, 1], ['0%', '100%'])
+  const [active, setActive] = useState('opening')
+  const [openingDark, setOpeningDark] = useState(true)
+  const [openingScene, setOpeningScene] = useState(() => openingSceneAt(0))
+  const [reading, setReading] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+  const [pulse, setPulse] = useState(0)
+  const [heard, setHeard] = useState(false)
+  const [called, setCalled] = useState(false)
+  const [waiting, setWaiting] = useState(false)
+  const timer = useRef<number | undefined>(undefined)
+  const openingRef = useRef<HTMLElement>(null)
+  const journey = useMotionValue(0)
+  const aperture = useMotionValue('inset(0px)')
+  const frameTop = useMotionValue(0)
+  const frameLeft = useMotionValue(0)
+  const frameWidth = useMotionValue(0)
+  const frameHeight = useMotionValue(0)
+  const frameRound = useMotionValue(0)
+  const frameOpacity = useMotionValue(0)
+  const { scrollYProgress } = useScroll()
+  const { scrollYProgress: approach } = useScroll({ target: openingRef, offset: ['start start', 'end end'] })
+  const openingWordsOpacity = useTransform(approach, [0, 0.26, 0.42], [0, 0, 1])
+  const skyCueOpacity = useTransform(approach, [0, 0.16, 0.39], [1, 1, 0])
+  useMotionValueEvent(approach, 'change', (value) => {
+    setOpeningDark(value < 0.9)
+    const scene = openingSceneAt(value)
+    setOpeningScene((current) => current.id === scene.id ? current : scene)
+  })
+  const sound = useWellSound()
+  const stage = active === 'opening' ? -1 : active === 'ritual' ? 1 : active === 'others' || active === 'always' ? 2 : 0
 
   useEffect(() => {
+    const sections = document.querySelectorAll<HTMLElement>('section[id]')
+    const updateActive = () => {
+      const focus = window.innerHeight * 0.28
+      const tops = SCENE_ANCHORS.map((id) => {
+        const section = document.getElementById(id)
+        return section ? section.getBoundingClientRect().top + window.scrollY : 0
+      })
+      const progress = sceneAtScroll(window.scrollY, window.innerHeight, document.documentElement.scrollHeight, tops)
+      journey.set(progress)
+      const partition = spatialPartitionAt(progress, window.innerWidth, window.innerHeight)
+      aperture.set(partition.clipPath)
+      frameTop.set(partition.top)
+      frameLeft.set(partition.left)
+      frameWidth.set(partition.width)
+      frameHeight.set(partition.height)
+      frameRound.set(partition.radius)
+      frameOpacity.set(partition.opacity)
+      for (const section of sections) {
+        const bounds = section.getBoundingClientRect()
+        if (bounds.top <= focus && bounds.bottom > focus) {
+          setActive((current) => current === section.id ? current : section.id)
+          break
+        }
+      }
+    }
+    updateActive()
+    window.addEventListener('scroll', updateActive, { passive: true })
+    window.addEventListener('resize', updateActive)
     const preference = window.matchMedia('(prefers-reduced-motion: reduce)')
-    const syncPreference = () => setReadingMode(preference.matches)
-    preference.addEventListener('change', syncPreference)
-    return () => preference.removeEventListener('change', syncPreference)
-  }, [])
+    const change = () => setReading(preference.matches)
+    preference.addEventListener('change', change)
+    return () => { window.removeEventListener('scroll', updateActive); window.removeEventListener('resize', updateActive); preference.removeEventListener('change', change); window.clearTimeout(timer.current) }
+  }, [journey, aperture, frameTop, frameLeft, frameWidth, frameHeight, frameRound, frameOpacity])
 
-  useEffect(() => {
-    const observer = new IntersectionObserver((entries) => {
-      const current = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0]
-      if (current) setActiveId(current.target.id)
-    }, { threshold: [0.15, 0.35, 0.55, 0.75] })
-    story.forEach(({ id }) => {
-      const section = document.getElementById(id)
-      if (section) observer.observe(section)
-    })
-    return () => observer.disconnect()
-  }, [])
+  const echo = () => {
+    setPulse((value) => value + 1)
+    setWaiting(true)
+    void sound.play()
+    window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => setWaiting(false), 2600)
+  }
 
-  return <main ref={pageRef} className={`site-shell ${readingMode ? 'reading-mode' : ''}`}>
-    <Suspense fallback={<div className="scene-fallback" aria-hidden="true"><div className="fallback-orbit" /></div>}>
-      <StoryScene progress={smoothProgress} active={activeId === 'weight' && !readingMode} />
-    </Suspense>
-    <div className="site-grain" aria-hidden="true" />
+  return <main className={[reading ? 'reading-mode' : '', openingDark && active === 'opening' && !reading ? 'dark-opening' : ''].join(' ')}>
+    {reading ? <StillWell /> : <SceneBoundary><Suspense fallback={<StillWell />}>
+      <StoryScene journey={journey} approach={approach} stage={stage} pulse={pulse} aperture={aperture} />
+    </Suspense></SceneBoundary>}
+    {!reading && <motion.div className="spatial-frame" style={{ top: frameTop, left: frameLeft, width: frameWidth, height: frameHeight, borderRadius: frameRound, opacity: frameOpacity }} aria-hidden="true" />}
     <header className="site-header">
-      <a className="wordmark" href="#begin" aria-label="Thread home">THREAD<span>®</span></a>
-      <nav className="chapter-nav" aria-label="Story chapters">
-        {story.map((item) => <a key={item.id} href={`#${item.id}`} className={activeId === item.id ? 'is-active' : ''} aria-current={activeId === item.id ? 'location' : undefined}>
-          <span>{item.number}</span><span className="nav-label">{item.label}</span>
-        </a>)}
+      <a className="wordmark" href="#opening" aria-label="wellwellwell — return to opening"><span aria-hidden="true">井</span></a>
+      <nav aria-label="Essay chapters" className="flex items-center gap-4 md:gap-7">
+        {story.map((chapter) => <a key={chapter.id} href={'#' + chapter.id} aria-current={active === chapter.id ? 'location' : undefined}><span>{chapter.number}</span><span className="nav-label">{chapter.label}</span></a>)}
       </nav>
-      <div className="edition-label">AN INTERACTIVE STORY<br />ISSUE Nº 01 — 2026</div>
+      <span className="header-note">A WELL.<br />THREE ENCOUNTERS.</span>
     </header>
-
-    <div className="progress-rail" aria-hidden="true"><motion.span style={{ width: progressWidth }} /></div>
-
-    <section className="intro" aria-labelledby="intro-title">
-      <div className="intro-meta"><span>AN EXPERIMENT IN WORDS</span><span>SCROLL TO FOLLOW THE THREAD <b>↓</b></span></div>
-      <h1 id="intro-title">Words have<br /><em>weight.</em></h1>
-      <p className="intro-description">A story about what we say,<br />what it sets in motion, and what brings us back.</p>
-      <a className="intro-scroll" href="#begin"><span className="scroll-line" />BEGIN READING</a>
+    <motion.div className="reading-progress" style={{ scaleX: scrollYProgress }} aria-hidden="true" />
+    <section ref={openingRef} className="opening" id="opening" aria-labelledby="opening-title" data-scene-name={openingScene.id} style={reading ? undefined : { height: OPENING_SCROLL_HEIGHT }}>
+      <div className="opening-frame">
+      <motion.p className="opening-sky-cue" style={reading ? undefined : { opacity: skyCueOpacity }}>Look up at the stars, then approach the well <span aria-hidden="true">↓</span></motion.p>
+      <motion.div style={reading ? undefined : { opacity: openingWordsOpacity }}>
+      <div className="eyebrow">关于一口井，以及井边的人 / A SPATIAL ESSAY</div>
+      <h1 id="opening-title">{story.map((chapter) => <a key={chapter.id} href={'#' + chapter.id}>{chapter.reaction}<span>{chapter.label}</span></a>)}</h1>
+      <p className="opening-caption">一口像素化的井。<br />三次停顿。一次重新靠近。</p>
+      <a href="#seeing" className="begin-link">Follow the words to the well <span aria-hidden="true">↓</span></a>
+      </motion.div>
+      <span className="drawing-note">{openingScene.name}</span>
+      </div>
     </section>
-
-    <div className="story-content">
-      {story.map((item, index) => <Chapter key={item.id} item={item} index={index} readingMode={readingMode} />)}
-    </div>
-
-    <footer className="site-footer"><span>THREAD® — 2026</span><span>MADE OF WORDS, HELD BY A THREAD</span><a href="#begin">BACK TO THE BEGINNING ↑</a></footer>
-    <ReadingMode enabled={readingMode} onChange={() => setReadingMode((value) => !value)} />
-    <div className="mobile-hint" aria-hidden="true">SCROLL TO MOVE <span>↓</span></div>
+    {story.map((chapter, index) => <section id={chapter.id} className="essay-section" key={chapter.id} aria-labelledby={chapter.id + '-title'}>
+      <div className="essay-column">
+        <div className="chapter-meta"><span>{chapter.number} / {chapter.label}</span><span>{chapter.reaction}</span></div>
+        <motion.div initial={reading ? false : { opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.1 }} transition={{ duration: reading ? 0 : 0.55 }}>
+          <h2 id={chapter.id + '-title'}>{chapter.title}</h2>
+          <p className="path-caption">{chapter.subtitle}</p>
+          {chapter.paragraphs.map((paragraph) => <p className="essay-paragraph" key={paragraph}>{paragraph}</p>)}
+          {index === 0 && <div className="glyph-study" aria-label="Visual connection between the Chinese character for well and a pixel grid"><span>井</span><span aria-hidden="true">↔</span><div className="pixel-grid" aria-hidden="true">{Array.from({ length: 9 }, (_, i) => <i key={i} />)}</div><span className="glyph-caption">一个字，一种观看。</span></div>}
+          {index === 1 && <div className="ritual-panel">
+            <div className={'echo-mark ' + (waiting && !reading ? 'is-sounding' : '')} aria-hidden="true"><i /><i /><i /></div>
+            <button className="text-button" onClick={echo} disabled={waiting}>{waiting ? 'Take a moment to listen.' : 'Make a sound at the well'} <span aria-hidden="true">↘</span></button>
+            <p role="status">{sound.unavailable ? 'Sound is unavailable, but you can still see the echo.' : waiting ? 'Sound · Wait · Echo' : 'Click to play a synthesized echo, or watch with sound off.'}</p>
+            <p className="process-note">A proposal for a sound ritual / This synthesized sound is not a recording of the physical work.</p>
+          </div>}
+          {index === 2 && <div className="encounter-panel">
+            <p className="path-caption">Invite someone beside you to respond.</p>
+            <div className="flex flex-wrap gap-3">
+              <button className="encounter-button" aria-pressed={called} onClick={() => { setCalled(true); setHeard(false) }}>I’m here.</button>
+              <button className="encounter-button" disabled={!called || heard} aria-pressed={heard} onClick={() => setHeard(true)}>I hear you.</button>
+            </div>
+            <p role="status">{heard ? 'One voice, one response. Put down the screen and keep talking if you like.' : called ? 'Invite someone beside you to answer.' : 'A two-person exercise on one device. You can also try it alone.'}</p>
+            {called && <button className="reset-button" onClick={() => { setCalled(false); setHeard(false) }}>Start the conversation again ↺</button>}
+          </div>}
+          <blockquote>{chapter.question}</blockquote>
+        </motion.div>
+      </div>
+      <div className="scene-caption" aria-hidden="true">{index === 0 ? '01 / FORM BECOMES A QUESTION' : index === 1 ? '02 / A BODY MAKES A RITUAL' : '03 / SOMEONE ON THE OTHER SIDE'}</div>
+    </section>)}
+    <section className="closing" id="always" aria-labelledby="closing-title">
+      <span className="eyebrow">WELL, WELL, WELL.</span>
+      <p className="closing-intro">从看见一个物体，到听见一次回响，再到注意另一个人。<br />也许井所留下的，是一个让关系发生的位置。</p>
+      <p className="closing-distance">Whether you’re standing at the well itself,<br />or reading these words from somewhere far away.</p>
+      <h2 id="closing-title">We love you.<br /><em>And we’ll, always.</em></h2>
+      <p className="closing-footnote">在井边，也在远方。</p>
+      <a className="begin-link" href="#opening">Approach once more <span aria-hidden="true">↑</span></a>
+    </section>
+    <footer><span className="footer-mark" aria-label="wellwellwell">井</span><span>SEE · LISTEN · MEET</span><a href="#opening">BACK TO THE WELL ↑</a></footer>
+    <aside className="reading-controls" aria-label="Reading and sound settings">
+      <button onClick={sound.toggleMuted} aria-pressed={sound.muted}>{sound.muted ? 'SOUND: OFF' : 'SOUND: ON'}</button>
+      <button onClick={() => setReading((value) => !value)} aria-pressed={reading}>{reading ? 'ENABLE 3D' : 'TEXT ONLY'}</button>
+    </aside>
   </main>
 }
