@@ -16,6 +16,9 @@ export const DESERT = {
   clearingFalloff: 13,
 } as const
 
+/** Dense sand around the well; the outer edge overlaps the coarse dune mesh. */
+export const NEAR_SAND = { innerRadius: 0.77, outerRadius: 13, duneCutRadius: 12, rings: 128, sides: 256 } as const
+
 const perlin = new ImprovedNoise()
 
 /** A fixed slice through a 3D gradient-noise field, composed at multiple scales. */
@@ -69,11 +72,71 @@ export function duneGeometry(): THREE.PlaneGeometry {
   for (let index = 0; index < indices.count; index += 3) {
     const a = indices.getX(index), b = indices.getX(index + 1), c = indices.getX(index + 2)
     // Leave the shaft clear. The finer ground mesh joins this opening to the rim.
-    if ([a, b, c].every((id) => Math.hypot(positions.getX(id), positions.getZ(id)) > 2.2)) triangles.push(a, b, c)
+    if ([a, b, c].every((id) => Math.hypot(positions.getX(id), positions.getZ(id)) > NEAR_SAND.duneCutRadius)) triangles.push(a, b, c)
   }
   geometry.setIndex(triangles)
   geometry.computeVertexNormals()
   geometry.computeBoundingBox()
+  geometry.computeBoundingSphere()
+  return geometry
+}
+
+/** Match PlaneGeometry's two-triangle interpolation at the dense patch boundary. */
+function coarseDuneHeight(x: number, z: number) {
+  const step = DESERT.size / DESERT.segments
+  const gx = (x + DESERT.size / 2) / step, gz = (z + DESERT.size / 2) / step
+  const ix = Math.floor(gx), iz = Math.floor(gz)
+  const fx = gx - ix, fz = gz - iz
+  const x0 = ix * step - DESERT.size / 2, z0 = iz * step - DESERT.size / 2
+  const h00 = desertHeight(x0, z0), h01 = desertHeight(x0, z0 + step)
+  const h10 = desertHeight(x0 + step, z0), h11 = desertHeight(x0 + step, z0 + step)
+  return fx + fz <= 1
+    ? (1 - fx - fz) * h00 + fz * h01 + fx * h10
+    : (1 - fx) * h01 + (fx + fz - 1) * h11 + (1 - fz) * h10
+}
+
+/** Irregular small-scale relief and sheltered deposits near the well. */
+export function nearSandGeometry(): THREE.BufferGeometry {
+  const { innerRadius, outerRadius, rings, sides } = NEAR_SAND
+  const vertexCount = (rings + 1) * sides
+  const positions = new Float32Array(vertexCount * 3)
+  const uv = new Float32Array(vertexCount * 2)
+  const indices: number[] = []
+  const windX = Math.cos(DESERT.windAngle), windZ = Math.sin(DESERT.windAngle)
+
+  for (let ring = 0; ring <= rings; ring++) {
+    const radius = THREE.MathUtils.lerp(innerRadius, outerRadius, ring / rings)
+    const detail = 1 - THREE.MathUtils.smoothstep(radius, 9, 12.5)
+    for (let side = 0; side < sides; side++) {
+      const angle = side / sides * Math.PI * 2
+      const x = Math.cos(angle) * radius, z = Math.sin(angle) * radius
+      const along = x * windX + z * windZ
+      const across = -x * windZ + z * windX
+      const grainRelief = (perlin.noise(x * 2.8, z * 2.8, DESERT.seed + 203) + 1) * 0.002
+      const rimDeposit = Math.exp(-(((radius - 1.12) / 0.5) ** 2)) * 0.032
+      const leeDeposit = THREE.MathUtils.smoothstep(along, 0.2, 1) * Math.exp(-((across / 1.4) ** 2)) * Math.exp(-Math.max(along, 0) / 4.5) * 0.038
+      const index = ring * sides + side
+      positions[index * 3] = x
+      const coarseBlend = THREE.MathUtils.smoothstep(radius, 10.5, 12.5)
+      const macro = desertHeight(x, z)
+      const base = coarseBlend > 0 ? THREE.MathUtils.lerp(macro, coarseDuneHeight(x, z), coarseBlend) : macro
+      positions[index * 3 + 1] = base + 0.004 + detail * (grainRelief + rimDeposit + leeDeposit)
+      positions[index * 3 + 2] = z
+      uv[index * 2] = x
+      uv[index * 2 + 1] = -z
+      if (ring < rings) {
+        const nextSide = (side + 1) % sides
+        const a = index, b = (ring + 1) * sides + side
+        const c = ring * sides + nextSide, d = (ring + 1) * sides + nextSide
+        indices.push(a, c, b, c, d, b)
+      }
+    }
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
   geometry.computeBoundingSphere()
   return geometry
 }

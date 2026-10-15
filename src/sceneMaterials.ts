@@ -24,16 +24,16 @@ export function stoneMaterial(base: string, repeat = 1, bump = 0.022, sand = fal
     const u = x / size, v = y / size
     const grain = hash(x, y)
     const cloud = noise(u, v, 4) * 0.5 + noise(u, v, 16) * 0.3 + noise(u, v, 64) * 0.2
-    const pore = !sand && grain < 0.022 ? 0.38 : 1
-    const ridge = sand ? (Math.sin(u * Math.PI * 32 + Math.sin(v * Math.PI * 4) * 0.6) + 1) * 0.5 : 0
-    const shade = (0.73 + cloud * 0.45 + grain * 0.09 + ridge * 0.08) * pore
+    const shade = sand
+      ? 0.96 + (cloud - 0.5) * 0.07 + (grain - 0.5) * 0.025
+      : 0.91 + cloud * 0.15 + grain * 0.02
     const index = (y * size + x) * 4
     // Values supplied as linear color data to preserve PBR energy.
     albedo[index] = Math.min(255, color.r * shade * 255)
     albedo[index + 1] = Math.min(255, color.g * shade * 255)
     albedo[index + 2] = Math.min(255, color.b * shade * 255)
     albedo[index + 3] = 255
-    const height = Math.round((sand ? ridge * 0.5 + cloud * 0.25 + grain * 0.25 : cloud * 0.7 + grain * 0.3) * pore * 255)
+    const height = Math.round((sand ? cloud * 0.15 + grain * 0.85 : cloud * 0.7 + grain * 0.3) * 255)
     relief[index] = relief[index + 1] = relief[index + 2] = height
     relief[index + 3] = 255
   }
@@ -49,6 +49,48 @@ export function stoneMaterial(base: string, repeat = 1, bump = 0.022, sand = fal
     texture.needsUpdate = true
   }
   return new THREE.MeshStandardMaterial({ map, bumpMap, bumpScale: bump, roughness: 0.87, metalness: 0 })
+}
+
+/** Soft pixel blocks in the stone, with blurred edges and no emissive color. */
+export function blurredMosaicStoneMaterial() {
+  const size = 512
+  const cells = 16
+  const source = document.createElement('canvas')
+  source.width = source.height = size
+  const blocks = source.getContext('2d')!
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const color = canvas.getContext('2d')!
+  const hash = (x: number, y: number) => {
+    const value = Math.sin(x * 127.1 + y * 311.7) * 43758.5453
+    return value - Math.floor(value)
+  }
+  const cell = size / cells
+  for (let row = 0; row < cells; row++) for (let column = 0; column < cells; column++) {
+    const largeVariation = hash(Math.floor(column / 3), Math.floor(row / 3)) - 0.5
+    const smallVariation = hash(column + 19, row + 41) - 0.5
+    const shade = largeVariation * 0.13 + smallVariation * 0.075
+    blocks.fillStyle = `rgb(${Math.round(210 * (1 + shade))}, ${Math.round(190 * (1 + shade))}, ${Math.round(161 * (1 + shade))})`
+    blocks.fillRect(column * cell, row * cell, cell, cell)
+  }
+  color.fillStyle = '#d2bea1'
+  color.fillRect(0, 0, size, size)
+  color.filter = 'blur(6px)'
+  color.drawImage(source, 0, 0)
+  color.filter = 'none'
+  const material = stoneMaterial('#ab9774', 1, 0.012)
+  material.map?.dispose()
+  const map = new THREE.CanvasTexture(canvas)
+  map.colorSpace = THREE.SRGBColorSpace
+  map.wrapS = map.wrapT = THREE.RepeatWrapping
+  map.magFilter = THREE.LinearFilter
+  map.minFilter = THREE.LinearMipmapLinearFilter
+  map.generateMipmaps = true
+  map.anisotropy = 4
+  map.needsUpdate = true
+  material.map = map
+  material.roughness = 0.93
+  return material
 }
 
 export function disposeStone(material: THREE.MeshStandardMaterial) {
@@ -84,6 +126,7 @@ export function roundStoneBlock() {
   })
   geometry.rotateX(Math.PI / 2)
   geometry.translate(0, 0.1325, -0.91)
+  geometry.clearGroups()
   geometry.computeBoundingBox()
   return geometry
 }

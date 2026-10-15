@@ -3,30 +3,47 @@ import * as THREE from 'three'
 /** Scene coordinates: 0 opening, 1 seeing, 2 ritual, 3 others, 4 closing. */
 export const SCENE_ANCHORS = ['opening', 'seeing', 'ritual', 'others', 'always'] as const
 
-/** Edit these named beats to change the camera composition within each chapter. */
+/** Chapter 02 uses the well-mouth camera; these beats begin with chapter 03. */
 export const SCENE_BEATS = [
-  { name: 'AT THE WELL', at: 1, position: [0, 1.7, 7.8], target: [0, -0.3, 0] },
-  { name: 'SEE THE FORM', at: 1.35, position: [0, 2.6, 6.8], target: [0, -0.25, 0] },
-  { name: 'SEE THE GRID', at: 1.75, position: [0, 4.2, 5.8], target: [0, -0.35, 0] },
-  { name: 'BEND TOWARD THE WELL', at: 2, position: [0, 4.8, 5.5], target: [0, -0.8, 0] },
-  { name: 'LISTEN INTO THE WELL', at: 2.5, position: [0, 5.8, 4.6], target: [0, -1.1, 0] },
-  { name: 'MAKE ROOM FOR ANOTHER', at: 3, position: [0, 3.3, 7.4], target: [0, -0.2, 0] },
-  { name: 'TWO PEOPLE AT THE WELL', at: 3.55, position: [0, 2.6, 8.8], target: [0, 0.1, 0] },
+  { name: 'MAKE ROOM FOR ANOTHER', at: 3.06, position: [0, 3.3, 7.4], target: [0, -0.2, 0] },
+  { name: 'RETURN TO THE WELL', at: 3.55, position: [0, 2.6, 8.8], target: [0, 0.1, 0] },
   { name: 'LEAVE THE WELL IN VIEW', at: 4.5, position: [0, 2.8, 13], target: [0, 0, 0] },
 ] as const
 
-/** Named boundaries for the 1:1 window and its wraparound transition before 02. */
+/** Named boundaries for the fixed 1:1 window and its mosaic dissolve before 03. */
 export const WINDOW_SCENES = {
   openingShrink: { name: 'OPENING INTO FRAME', start: 0.82, end: 1.08 },
-  seeing: { name: '01 / SEEING WINDOW', start: 1.08, end: 1.76 },
-  exitRight: { name: 'EXIT RIGHT', start: 1.76, end: 1.9 },
-  pause: { name: 'EMPTY SPACE', start: 1.9, end: 2.04 },
-  enterLeft: { name: 'ENTER FROM LEFT', start: 2.04, end: 2.22 },
-  ritual: { name: '02 / RITUAL WINDOW', start: 2.22, end: 2.8 },
-  othersTransition: { name: '03 / OTHERS TRANSITION', start: 2.8, end: 3.12 },
-  others: { name: '03 / OTHERS WINDOW', start: 3.12, end: 3.82 },
+  seeing: { name: '01 / GLOWING WELL', start: 1.08, end: 1.9 },
+  lookIntoWell: { name: '02 / LOOK INTO THE WELL', start: 1.9, end: 2.35 },
+  ritual: { name: '02 / RITUAL WINDOW', start: 2.35, end: 2.66 },
+  mosaicDissolve: { name: 'MOSAIC DISSOLVE', start: 2.66, end: 2.88 },
+  pause: { name: 'EMPTY SPACE', start: 2.88, end: 3.06 },
+  mosaicReform: { name: '03 / MOSAIC REFORM', start: 3.06, end: 3.26 },
+  othersTransition: { name: '03 / OTHERS TRANSITION', start: 3.26, end: 3.42 },
+  others: { name: '03 / OTHERS WINDOW', start: 3.42, end: 3.82 },
   closingTransition: { name: 'CLOSING TRANSITION', start: 3.82, end: 4.12 },
+  closingApproach: { name: 'APPROACH THE WELL', start: 4.66, end: 4.83 },
+  closingTilt: { name: 'LOOK INTO THE WELL', start: 4.83, end: 4.94 },
+  wellDive: { name: 'ENTER THE WELL', start: 4.94, end: 5.13 },
+  ballPool: { name: 'THE BALLS IN THE WELL', start: 5.13, end: 5.3 },
 } as const
+
+/** Pixel blocks grow, become finer, then dissolve into the page color. */
+export const MOSAIC_TIMING = { start: 2.45, coarsest: 2.61, finest: 2.76, paperEnd: 2.88 } as const
+
+/** The entry samples the exit backwards, keeping both directions symmetrical. */
+export function mosaicTransitionAt(progress: number) {
+  if (progress >= WINDOW_SCENES.mosaicReform.end) return { pixelSize: 1, paperMix: 0 }
+  const reversed = progress >= WINDOW_SCENES.mosaicReform.start && progress < WINDOW_SCENES.mosaicReform.end
+  const exitProgress = reversed
+    ? MOSAIC_TIMING.paperEnd - (progress - WINDOW_SCENES.mosaicReform.start) / (WINDOW_SCENES.mosaicReform.end - WINDOW_SCENES.mosaicReform.start) * (MOSAIC_TIMING.paperEnd - MOSAIC_TIMING.start)
+    : progress
+  const grow = smooth((exitProgress - MOSAIC_TIMING.start) / (MOSAIC_TIMING.coarsest - MOSAIC_TIMING.start))
+  const refine = smooth((exitProgress - MOSAIC_TIMING.coarsest) / (MOSAIC_TIMING.finest - MOSAIC_TIMING.coarsest))
+  const dissolve = smooth((exitProgress - MOSAIC_TIMING.finest) / (MOSAIC_TIMING.paperEnd - MOSAIC_TIMING.finest))
+  const pixelSize = THREE.MathUtils.lerp(1, THREE.MathUtils.lerp(31, 5, refine), grow) * (1 - dissolve) + dissolve
+  return { pixelSize, paperMix: dissolve }
+}
 
 const smooth = (value: number) => {
   const t = THREE.MathUtils.clamp(value, 0, 1)
@@ -57,32 +74,29 @@ export function spatialPartitionAt(progress: number, viewportWidth: number, view
     }
   }
   const full: WindowFrame = { left: 0, top: 0, width: viewportWidth, height: viewportHeight, radius: 0, opacity: 0 }
-  const seeing = frame(viewportWidth * centerX, viewportHeight * centerY)
-  const rightExit = frame(viewportWidth + side, viewportHeight * centerY, 0.72)
-  const leftEntry = frame(-side, viewportHeight * centerY, 0.72)
-  const ritual = frame(viewportWidth * (compact ? 0.5 : 0.69), viewportHeight * centerY, 1, 0.5)
+  const seeing = frame(viewportWidth * centerX, viewportHeight * centerY, 1, 0.5)
   const others = frame(viewportWidth * (compact ? 0.5 : 0.74), viewportHeight * (compact ? 0.31 : 0.56), 0.96)
-  const closing = frame(viewportWidth * 0.5, viewportHeight * 0.5, 1.08)
-  const { openingShrink, exitRight, pause, enterLeft, othersTransition, closingTransition } = WINDOW_SCENES
+  const { openingShrink, pause, mosaicReform, othersTransition, closingTransition } = WINDOW_SCENES
   const phase = (start: number, end: number) => (progress - start) / (end - start)
   let current: WindowFrame
   if (progress < openingShrink.start) current = full
   else if (progress < openingShrink.end) current = blend(full, seeing, phase(openingShrink.start, openingShrink.end))
-  else if (progress < exitRight.start) current = seeing
-  else if (progress < exitRight.end) current = blend(seeing, rightExit, phase(exitRight.start, exitRight.end))
-  else if (progress < pause.end) current = rightExit
-  else if (progress < enterLeft.end) current = blend(leftEntry, ritual, phase(enterLeft.start, enterLeft.end))
-  else if (progress < othersTransition.start) current = ritual
-  else if (progress < othersTransition.end) current = blend(ritual, others, phase(othersTransition.start, othersTransition.end))
+  else if (progress < othersTransition.start) current = seeing
+  else if (progress < othersTransition.end) current = blend(seeing, others, phase(othersTransition.start, othersTransition.end))
   else if (progress < closingTransition.start) current = others
-  else if (progress < closingTransition.end) current = blend(others, closing, phase(closingTransition.start, closingTransition.end))
-  else current = closing
+  else if (progress < closingTransition.end) current = blend(others, full, phase(closingTransition.start, closingTransition.end))
+  else current = full
 
   const right = viewportWidth - current.left - current.width
   const bottom = viewportHeight - current.top - current.height
+  const pauseFade = progress < pause.start || progress >= pause.end ? 0
+    : smooth((progress - pause.start) / 0.08)
   return {
     ...current,
     clipPath: `inset(${current.top}px ${right}px ${bottom}px ${current.left}px round ${current.radius}px)`,
+    opacity: current.opacity * (1 - pauseFade),
+    sceneOpacity: progress >= pause.start && progress < pause.end ? 0 : 1,
+    paperMix: progress >= pause.start && progress < mosaicReform.start ? 1 : mosaicTransitionAt(progress).paperMix,
   }
 }
 
@@ -94,7 +108,7 @@ export function sceneAtScroll(scrollY: number, viewportHeight: number, documentH
     }
   }
   const last = anchors[anchors.length - 1]
-  return 4 + 0.5 * THREE.MathUtils.clamp((scrollY - last) / Math.max(1, documentHeight - viewportHeight - last), 0, 1)
+  return 4 + 1.3 * THREE.MathUtils.clamp((scrollY - last) / Math.max(1, documentHeight - viewportHeight - last), 0, 1)
 }
 
 export function sceneCamera(progress: number) {

@@ -10,6 +10,31 @@ export const OPENING_SCENES = {
   arrival: { id: 'arrival', name: '06 / AT THE WELL', start: 0.84, end: 1 },
 } as const
 
+/** Three deterministic meteor waves culminate in the three fixed-well glows. */
+export const SHOOTING_STARS = (() => {
+  let seed = 91273
+  const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296 }
+  const peaks = [OPENING_SCENES.glowOne.start, OPENING_SCENES.glowTwo.start, OPENING_SCENES.glowThree.start]
+  return peaks.flatMap((peak) => Array.from({ length: 16 }, (_, index) => {
+    const impact = index === 15 ? peak : peak - 0.012 - random() * 0.11
+    const duration = 0.08 + random() * 0.13
+    return {
+      start: Math.max(0.04, impact - duration),
+      impact,
+      from: [(random() - 0.5) * 38, 8 + random() * 17, -2 - random() * 23] as const,
+      to: [(random() - 0.5) * 0.56, -1.25 - random() * 0.55, (random() - 0.5) * 0.56] as const,
+      size: index === 15 ? 1.8 : 0.45 + random() * 1.35,
+      tail: 0.12 + random() * 0.18,
+      bend: -0.3 + random() * 5.2,
+      sideBend: (random() - 0.5) * 10,
+      depthBend: (random() - 0.5) * 6,
+      exponent: 0.75 + random() * 1.55,
+      brightness: 0.48 + random() * 0.85,
+      palette: random(),
+    }
+  }))
+})()
+
 export const OPENING_CAMERA = {
   startZ: 24,
   endZ: 7.8,

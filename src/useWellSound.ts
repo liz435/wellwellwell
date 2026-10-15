@@ -39,6 +39,40 @@ export function useWellSound() {
       setUnavailable(false)
     } catch { setUnavailable(true) }
   }, [])
+  const playSand = useCallback(async () => {
+    if (mutedRef.current) return
+    try {
+      context.current ??= new AudioContext()
+      const audio = context.current
+      await audio.resume()
+      if (audio.state !== 'running' || mutedRef.current) return
+      if (!master.current) {
+        master.current = audio.createGain()
+        master.current.gain.value = 0.16
+        master.current.connect(audio.destination)
+      }
+      const duration = 0.18
+      const buffer = audio.createBuffer(1, Math.ceil(audio.sampleRate * duration), audio.sampleRate)
+      const samples = buffer.getChannelData(0)
+      for (let index = 0; index < samples.length; index++) samples[index] = (Math.random() * 2 - 1) * (1 - index / samples.length)
+      const source = audio.createBufferSource()
+      const filter = audio.createBiquadFilter()
+      const envelope = audio.createGain()
+      source.buffer = buffer
+      filter.type = 'lowpass'
+      filter.frequency.value = 850
+      const start = audio.currentTime
+      envelope.gain.setValueAtTime(0.0001, start)
+      envelope.gain.exponentialRampToValueAtTime(0.34, start + 0.012)
+      envelope.gain.exponentialRampToValueAtTime(0.0001, start + duration)
+      source.connect(filter)
+      filter.connect(envelope)
+      envelope.connect(master.current)
+      source.onended = () => { source.disconnect(); filter.disconnect(); envelope.disconnect() }
+      source.start(start)
+      source.stop(start + duration)
+    } catch { setUnavailable(true) }
+  }, [])
   const toggleMuted = () => {
     mutedRef.current = !mutedRef.current
     setMuted(mutedRef.current)
@@ -54,5 +88,5 @@ export function useWellSound() {
       master.current = null
     }
   }, [])
-  return { play, muted, toggleMuted, unavailable }
+  return { play, playSand, muted, toggleMuted, unavailable }
 }
