@@ -10,25 +10,34 @@ export const OPENING_SCENES = {
   arrival: { id: 'arrival', name: '06 / AT THE WELL', start: 0.84, end: 1 },
 } as const
 
-/** Three deterministic meteor waves culminate in the three fixed-well glows. */
+/** Seconds on the prepared scene's clock, independent of scroll and loading time. */
+export const OPENING_TIMING = { skyHold: 1.4, tiltDuration: 4, releaseDuration: 1.2 } as const
+
+/** The opening launches immediately; later waves are triggered by scroll. */
+export const METEOR_WAVE_TRIGGERS = [0, 0.39, 0.54] as const
+
 export const SHOOTING_STARS = (() => {
   let seed = 91273
   const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296 }
-  const peaks = [OPENING_SCENES.glowOne.start, OPENING_SCENES.glowTwo.start, OPENING_SCENES.glowThree.start]
-  return peaks.flatMap((peak) => Array.from({ length: 16 }, (_, index) => {
-    const impact = index === 15 ? peak : peak - 0.012 - random() * 0.11
-    const duration = 0.08 + random() * 0.13
+  return METEOR_WAVE_TRIGGERS.flatMap((_, wave) => Array.from({ length: 16 }, (_, index) => {
     return {
-      start: Math.max(0.04, impact - duration),
-      impact,
-      from: [(random() - 0.5) * 38, 8 + random() * 17, -2 - random() * 23] as const,
+      wave,
+      delay: wave === 0 ? Math.floor(index / 4) * 1.25 + (index === 0 ? 0 : random() * 0.55) : random() * 1.15,
+      duration: wave === 0 ? 1.1 + random() * 1.05 : 0.65 + random() * 0.8,
+      // Mix interior launches into the four edges without adding more particles.
+      interior: (index + wave) % 3 === 1,
+      interiorX: (random() - 0.5) * 1.4,
+      interiorHeight: 0.2 + random() * 0.6,
+      edge: (index + wave) % 4,
+      edgePosition: (Math.floor(index / 4) + random()) / 4,
+      spawnDepth: 24 + random() * 20,
       to: [(random() - 0.5) * 0.56, -1.25 - random() * 0.55, (random() - 0.5) * 0.56] as const,
       size: index === 15 ? 1.8 : 0.45 + random() * 1.35,
-      tail: 0.12 + random() * 0.18,
-      bend: -0.3 + random() * 5.2,
-      sideBend: (random() - 0.5) * 10,
-      depthBend: (random() - 0.5) * 6,
-      exponent: 0.75 + random() * 1.55,
+      tail: 0.07 + random() * 0.14,
+      bend: 0.15 + random() * 2.2,
+      sideBend: (random() - 0.5) * 7,
+      depthBend: (random() - 0.5) * 4,
+      exponent: 1.05 + random() * 0.6,
       brightness: 0.48 + random() * 0.85,
       palette: random(),
     }
@@ -56,11 +65,6 @@ const smooth = (value: number) => {
   return t * t * (3 - 2 * t)
 }
 
-const soft = (value: number) => {
-  const t = Math.max(0, Math.min(1, value))
-  return t * t * t * (t * (t * 6 - 15) + 10)
-}
-
 export function openingSceneAt(progress: number) {
   const scenes = Object.values(OPENING_SCENES)
   for (let index = scenes.length - 1; index >= 0; index--) {
@@ -71,20 +75,13 @@ export function openingSceneAt(progress: number) {
 
 /** The well stays planted; only the camera, ambient light, and stone glow change. */
 export function openingSequence(progress: number) {
-  let glow = 0
-  for (const scene of [OPENING_SCENES.glowOne, OPENING_SCENES.glowTwo, OPENING_SCENES.glowThree]) {
-    const phase = (progress - scene.start) / (scene.end - scene.start)
-    if (phase > 0 && phase < 1) {
-      glow = soft(phase / 0.38) * (1 - soft((phase - 0.48) / 0.52))
-    }
-  }
   const tilt = OPENING_SCENES.tilt
   return {
     cameraX: 0,
     cameraY: OPENING_CAMERA.height,
     cameraZ: OPENING_CAMERA.startZ + (OPENING_CAMERA.endZ - OPENING_CAMERA.startZ) * smooth((progress - OPENING_CAMERA.dollyStart) / (OPENING_CAMERA.dollyEnd - OPENING_CAMERA.dollyStart)),
-    cameraPitch: OPENING_CAMERA.skyPitch + (OPENING_CAMERA.wellPitch - OPENING_CAMERA.skyPitch) * smooth((progress - tilt.start) / (tilt.end - tilt.start)),
-    glow,
+    cameraPitch: OPENING_CAMERA.skyPitch + (-0.09 - OPENING_CAMERA.skyPitch) * smooth((progress - tilt.start) / (tilt.end - tilt.start))
+      + (OPENING_CAMERA.wellPitch + 0.09) * smooth((progress - OPENING_SCENES.glowThree.start) / (OPENING_SCENES.arrival.start - OPENING_SCENES.glowThree.start)),
     daylight: OPENING_LIGHT.night + (OPENING_LIGHT.arrival - OPENING_LIGHT.night) * smooth((progress - OPENING_LIGHT.dawnStart) / (1 - OPENING_LIGHT.dawnStart)),
   }
 }

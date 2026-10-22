@@ -3,7 +3,7 @@ import { ImprovedNoise } from 'three/addons/math/ImprovedNoise.js'
 
 export const DESERT = {
   size: 150,
-  segments: 192,
+  segments: 256,
   seed: 23.71,
   baseHeight: -1.34,
   amplitude: 5.2,
@@ -45,15 +45,26 @@ export function desertHeight(x: number, z: number): number {
   const u = (along + warpX) * DESERT.frequency * 0.7
   const v = (across + warpZ) * DESERT.frequency * 1.35
   const broad = fbm3(u, v, DESERT.seed)
-  const ridge = 1 - Math.abs(perlin.noise(u * 1.4, v * 1.4, DESERT.seed + 11))
-  const shoulder = perlin.noise(u * 0.5, v * 0.5, DESERT.seed + 31)
-  const height = Math.max(0.08, 0.35 + broad * 0.85 + ridge ** 3 * 0.22 + shoulder * 0.15)
+  // Long sculpted crests: a broad windward face and a steeper slip face.
+  // Noise bends the ridge line rather than breaking the slopes into small hills.
+  let dunes = 0
+  for (let band = 0; band < 4; band++) {
+    const center = -17 - band * 20
+    const bend = Math.sin(x * 0.047 + band * 1.7) * 7
+      + perlin.noise(x * 0.028, band * 2.1, DESERT.seed) * 4
+    const distance = z - center - bend - x * (band % 2 === 0 ? 0.16 : -0.12)
+    const width = distance < 0 ? 15 : 5.2
+    const profile = Math.exp(-Math.pow(Math.abs(distance) / width, 1.22))
+    const crestHeight = (5.6 + band * 0.8) * (0.7 + 0.3 * Math.cos(x * 0.035 + band))
+    dunes += profile * crestHeight
+  }
+  const height = Math.max(0.03, dunes + broad * 0.65)
   const wellClearing = THREE.MathUtils.smoothstep(Math.hypot(x, z), DESERT.clearingRadius, DESERT.clearingFalloff)
   // Keep the straight camera approach above the sand; distant dunes remain on both sides.
   const approach = THREE.MathUtils.smoothstep(z, -4, 8) * (1 - THREE.MathUtils.smoothstep(z, 38, 55))
   const corridor = THREE.MathUtils.smoothstep(Math.abs(x), 13, 27)
   const clearing = Math.min(wellClearing, 1 - approach * (1 - corridor))
-  return DESERT.baseHeight + height * DESERT.amplitude * clearing
+  return DESERT.baseHeight + height * clearing
 }
 
 export function duneGeometry(): THREE.PlaneGeometry {
@@ -138,5 +149,24 @@ export function nearSandGeometry(): THREE.BufferGeometry {
   geometry.setIndex(indices)
   geometry.computeVertexNormals()
   geometry.computeBoundingSphere()
+  return geometry
+}
+
+/** A low-cost distant silhouette behind the sand ridges. */
+export function mountainGeometry(): THREE.BufferGeometry {
+  const count = 192
+  const positions: number[] = [], indices: number[] = []
+  for (let i = 0; i <= count; i++) {
+    const angle = i / count * Math.PI * 2
+    const x = Math.cos(angle) * 103, z = Math.sin(angle) * 103
+    const height = 6 + Math.abs(perlin.noise(x * 0.035, z * 0.035, 81)) * 15
+      + Math.abs(perlin.noise(x * 0.13, z * 0.13, 93)) * 4
+    positions.push(x, -9, z, x, height, z)
+    if (i < count) { const a = i * 2; indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2) }
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
   return geometry
 }

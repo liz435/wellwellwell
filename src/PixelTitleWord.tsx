@@ -1,13 +1,14 @@
 import { useEffect, useRef } from 'react'
 
-type PixelTitleLinkProps = {
-  href: string
+type PixelTitleWordProps = {
   meaning: string
   detail: string
+  automatic?: boolean
+  exited?: boolean
 }
 
 /** Draw the actual title glyphs at low resolution, then enlarge without smoothing. */
-export function PixelTitleLink({ href, meaning, detail }: PixelTitleLinkProps) {
+export function PixelTitleWord({ meaning, detail, automatic = false, exited = false }: PixelTitleWordProps) {
   const wordRef = useRef<HTMLSpanElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
@@ -18,6 +19,8 @@ export function PixelTitleLink({ href, meaning, detail }: PixelTitleLinkProps) {
     const draw = () => {
       const bounds = word.getBoundingClientRect()
       if (!bounds.width || !bounds.height) return
+      const textNode = word.querySelector('.title-text')?.firstChild
+      if (!(textNode instanceof Text)) return
       const style = getComputedStyle(word)
       const scale = 2
       const source = document.createElement('canvas')
@@ -30,15 +33,13 @@ export function PixelTitleLink({ href, meaning, detail }: PixelTitleLinkProps) {
       sourceContext.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
       sourceContext.textBaseline = 'middle'
       sourceContext.fillStyle = style.color
-      const spacing = Number.parseFloat(style.letterSpacing) || 0
-      const letters = Array.from('Well')
-      const widths = letters.map((letter) => sourceContext.measureText(letter).width)
-      const drawnWidth = widths.reduce((total, width) => total + width, 0) + spacing * (letters.length - 1)
-      sourceContext.scale(Math.min(1, (bounds.width - 2) / drawnWidth), 1)
-      let x = 0
-      for (const [index, letter] of letters.entries()) {
-        sourceContext.fillText(letter, x, bounds.height * 0.55)
-        x += widths[index] + spacing
+      const range = document.createRange()
+      const letters = textNode.textContent ?? ''
+      for (let index = 0; index < letters.length; index++) {
+        range.setStart(textNode, index)
+        range.setEnd(textNode, index + 1)
+        const letter = range.getBoundingClientRect()
+        sourceContext.fillText(letters[index], letter.left - bounds.left, bounds.height * 0.55)
       }
 
       canvas.width = Math.max(1, Math.ceil(bounds.width / 8))
@@ -77,11 +78,15 @@ export function PixelTitleLink({ href, meaning, detail }: PixelTitleLinkProps) {
     context.drawImage(pixel, 0, 0)
   }
 
-  return <a href={href} aria-label={`Well — ${meaning}, ${detail}`} onPointerEnter={drawCurrentColor} onFocus={drawCurrentColor}>
+  useEffect(() => { if (automatic) drawCurrentColor() }, [automatic])
+
+  return <span className={`title-line${automatic ? ' is-automatic' : ''}${exited ? ' is-exited' : ''}`}
+    tabIndex={exited ? -1 : 0} role="group" aria-label={`Well — ${meaning}, ${detail}`}
+    onPointerEnter={drawCurrentColor} onFocus={drawCurrentColor}>
     <span className="title-word" ref={wordRef}>
       <span className="title-text">Well</span>
       <canvas ref={canvasRef} className="title-mosaic" aria-hidden="true" />
       <span className="title-meaning" aria-hidden="true"><strong>{meaning}</strong><small>{detail}</small></span>
     </span>
-  </a>
+  </span>
 }

@@ -90,6 +90,31 @@ export function blurredMosaicStoneMaterial() {
   map.needsUpdate = true
   material.map = map
   material.roughness = 0.93
+  const glitch = { strength: { value: 0 }, time: { value: 0 } }
+  material.userData.glitch = glitch
+  material.customProgramCacheKey = () => 'well-stone-glitch-v1'
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.wellGlitch = glitch.strength
+    shader.uniforms.wellGlitchTime = glitch.time
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform float wellGlitch;
+        uniform float wellGlitchTime;
+        float wellHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }`)
+      .replace('#include <map_fragment>', `
+        #ifdef USE_MAP
+          float cells = mix(16.0, 5.0, wellGlitch);
+          vec2 block = floor(vMapUv * cells);
+          float scan = floor(vMapUv.y * 42.0);
+          float tick = floor(wellGlitchTime * 10.0);
+          float tear = step(0.84, wellHash(vec2(scan, tick)));
+          vec2 pixelUv = (block + 0.5) / cells;
+          pixelUv.x += (wellHash(vec2(scan + 9.0, tick)) - 0.5) * tear * wellGlitch * 0.24;
+          vec2 sampleUv = mix(vMapUv, pixelUv, wellGlitch);
+          vec4 sampledDiffuseColor = texture2D(map, sampleUv);
+          diffuseColor *= sampledDiffuseColor;
+        #endif`)
+  }
   return material
 }
 

@@ -1,30 +1,42 @@
-import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Component, lazy, Suspense, useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { motion, useMotionValue, useMotionValueEvent, useScroll, useTransform } from 'motion/react'
 import { story } from './story'
 import { useWellSound } from './useWellSound'
-import { OPENING_SCROLL_HEIGHT, openingSceneAt } from './openingSequence'
+import { OPENING_SCROLL_HEIGHT } from './openingSequence'
 import { SCENE_ANCHORS, sceneAtScroll, spatialPartitionAt } from './sceneTimeline'
-import { PixelTitleLink } from './PixelTitleLink'
+import { PixelTitleWord } from './PixelTitleWord'
+import { useGuidedScroll } from './useGuidedScroll'
+import type { SandTool } from './sandSimulation'
+import { useWellStore } from './useWellStore'
+import { LoadingScreen } from './LoadingScreen'
 
 const StoryScene = lazy(() => import('./Scene').then((module) => ({ default: module.StoryScene })))
+const TITLE_GLOW_SCENES = ['tilt', 'glow-one', 'glow-two'] as const
 function StillWell() { return <div className="still-well" aria-hidden="true"><span>井</span></div> }
 class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false }
   static getDerivedStateFromError() { return { failed: true } }
+  componentDidCatch() { useWellStore.getState().finishCinematic() }
   render() { return this.state.failed ? <StillWell /> : this.props.children }
 }
 
 export default function App() {
-  const [active, setActive] = useState('opening')
-  const [openingDark, setOpeningDark] = useState(true)
-  const [closingDark, setClosingDark] = useState(false)
-  const [openingScene, setOpeningScene] = useState(() => openingSceneAt(0))
-  const [reading, setReading] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
-  const [pulse, setPulse] = useState(0)
-  const [heard, setHeard] = useState(false)
-  const [called, setCalled] = useState(false)
-  const [waiting, setWaiting] = useState(false)
+  const active = useWellStore((state) => state.active)
+  const cinematic = useWellStore((state) => !state.cinematicComplete && !state.reading)
+  const introStarted = useWellStore((state) => state.introStarted)
+  const sceneReady = useWellStore((state) => state.sceneReady)
+  const loaderDismissed = useWellStore((state) => state.loaderDismissed)
+  const openingDark = useWellStore((state) => state.openingDark)
+  const closingDark = useWellStore((state) => state.closingDark)
+  const openingScene = useWellStore((state) => state.openingScene)
+  const reading = useWellStore((state) => state.reading)
+  const sandBrush = useWellStore((state) => state.sandBrush)
+  const waiting = useWellStore((state) => state.waiting)
+  const called = useWellStore((state) => state.called)
+  const heard = useWellStore((state) => state.heard)
+  useGuidedScroll(reading)
   const timer = useRef<number | undefined>(undefined)
+  const introGlyph = useRef<HTMLCanvasElement>(null)
   const openingRef = useRef<HTMLElement>(null)
   const journey = useMotionValue(0)
   const aperture = useMotionValue('inset(0px)')
@@ -38,7 +50,6 @@ export default function App() {
   const frameOpacity = useMotionValue(0)
   const { scrollYProgress } = useScroll()
   const { scrollYProgress: approach } = useScroll({ target: openingRef, offset: ['start start', 'end end'] })
-  const openingWordsOpacity = useTransform(approach, [0, 0.26, 0.42], [0, 0, 1])
   const skyCueOpacity = useTransform(approach, [0, 0.16, 0.39], [1, 1, 0])
   const sandCueOpacity = useTransform(approach, [0.65, 0.88], [0, 1])
   const closingIntroOpacity = useTransform(journey, [4.13, 4.2, 4.28, 4.34], [0, 1, 1, 0])
@@ -47,13 +58,12 @@ export default function App() {
   const closingFinalPointerEvents = useTransform(journey, (value) => value >= 4.42 && value < 4.64 ? 'auto' : 'none')
   const ballCueOpacity = useTransform(journey, [5.06, 5.17], [0, 1])
   useMotionValueEvent(approach, 'change', (value) => {
-    setOpeningDark(value < 0.9)
-    const scene = openingSceneAt(value)
-    setOpeningScene((current) => current.id === scene.id ? current : scene)
+    useWellStore.getState().setOpeningProgress(value)
   })
-  useMotionValueEvent(journey, 'change', (value) => setClosingDark(value >= 4.08))
+  useMotionValueEvent(journey, 'change', (value) => useWellStore.getState().setClosingProgress(value))
   const sound = useWellSound()
-  const stage = active === 'opening' ? -1 : active === 'ritual' ? 1 : active === 'others' || active === 'always' ? 2 : 0
+
+  useLayoutEffect(() => { document.getElementById('root')?.style.removeProperty('background') }, [])
 
   useEffect(() => {
     const sections = document.querySelectorAll<HTMLElement>('section[id]')
@@ -78,7 +88,7 @@ export default function App() {
       frameOpacity.set(partition.opacity)
       for (const section of bounds) {
         if (section.top <= focus && section.bottom > focus) {
-          setActive((current) => current === section.id ? current : section.id)
+          useWellStore.getState().setActive(section.id)
           break
         }
       }
@@ -99,29 +109,84 @@ export default function App() {
     window.addEventListener('scroll', schedule, { passive: true })
     window.addEventListener('resize', measure)
     const preference = window.matchMedia('(prefers-reduced-motion: reduce)')
-    const change = () => setReading(preference.matches)
+    const change = () => useWellStore.getState().setReading(preference.matches)
     preference.addEventListener('change', change)
     return () => { observer.disconnect(); window.cancelAnimationFrame(frame); window.removeEventListener('scroll', schedule); window.removeEventListener('resize', measure); preference.removeEventListener('change', change) }
-  }, [reading, journey, aperture, sceneOpacity, paperWashOpacity, frameTop, frameLeft, frameWidth, frameHeight, frameRound, frameOpacity])
+  }, [journey, aperture, sceneOpacity, paperWashOpacity, frameTop, frameLeft, frameWidth, frameHeight, frameRound, frameOpacity])
 
   useEffect(() => () => window.clearTimeout(timer.current), [])
 
+  useLayoutEffect(() => {
+    const canvas = introGlyph.current
+    if (!canvas) return
+    const context = canvas?.getContext('2d')
+    if (!context) return
+    context.clearRect(0, 0, canvas.width, canvas.height)
+    const rim = ['#5f5d59', '#aa9b82', '#d8c4a3', '#eee1c5']
+    const center = ['#141923', '#292d35', '#4a4c50', '#817b70']
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        const radius = Math.hypot(x - 3.5, y - 3.5)
+        if (radius > 3.8) continue
+        const noise = (x * 37 + y * 53 + x * y * 19) % 23
+        const colors = radius > 2.35 ? rim : center
+        context.fillStyle = colors[(noise + x + y) % colors.length]
+        context.fillRect(x * 3, y * 3, 3, 3)
+      }
+    }
+  }, [cinematic, loaderDismissed])
+
+  useEffect(() => {
+    if (!cinematic) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.scrollTo(0, 0)
+    const skip = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') useWellStore.getState().finishCinematic()
+    }
+    window.addEventListener('keydown', skip)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', skip)
+    }
+  }, [cinematic])
+
   const echo = () => {
-    setPulse((value) => value + 1)
-    setWaiting(true)
+    useWellStore.getState().beginEcho()
     void sound.play()
     window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => setWaiting(false), 2600)
+    timer.current = window.setTimeout(() => useWellStore.getState().endEcho(), 2600)
   }
 
-  return <main className={[reading ? 'reading-mode' : '', openingDark && active === 'opening' && !reading ? 'dark-opening' : '', closingDark && !reading ? 'dark-closing' : ''].join(' ')}>
-    <a className="skip-link" href="#seeing">Skip to the essay</a>
+  return <main className={[reading ? 'reading-mode' : '', cinematic ? 'cinematic-opening' : '', sandBrush.enabled && !reading ? 'sand-editing' : '', openingDark && active === 'opening' && !reading ? 'dark-opening' : '', closingDark && !reading ? 'dark-closing' : ''].join(' ')}>
+    <a className="skip-link" href="#seeing" onClick={() => useWellStore.getState().finishCinematic()}>Skip to the essay</a>
     {reading ? <StillWell /> : <SceneBoundary><Suspense fallback={<StillWell />}>
-      <StoryScene journey={journey} approach={approach} stage={stage} pulse={pulse} aperture={aperture} sceneOpacity={sceneOpacity} onSandTouch={sound.playSand} />
+      <StoryScene journey={journey} approach={approach} aperture={aperture} sceneOpacity={sceneOpacity} onSandTouch={sound.playSand} />
     </Suspense></SceneBoundary>}
+    {cinematic && <button className={'intro-start' + (!loaderDismissed ? ' is-preloading' : '') + (introStarted ? ' is-started' : '')}
+      type="button" disabled={!sceneReady || !loaderDismissed || introStarted} onClick={() => useWellStore.getState().startIntro()}
+      aria-label={sceneReady ? 'Start the opening film' : 'Preparing the opening scene'}>
+      <span className="intro-start-ring" aria-hidden="true" />
+      <span className="intro-start-glyph" aria-hidden="true">井</span>
+      <canvas ref={introGlyph} className="intro-start-pixels" width="24" height="24" aria-hidden="true" />
+    </button>}
+    {!reading && <div className="sand-tools" role="group" aria-label="Sand tools" inert={cinematic}>
+      <button type="button" aria-pressed={sandBrush.enabled} onClick={() => useWellStore.getState().toggleSandBrush()}>
+        {sandBrush.enabled ? 'Done shaping' : 'Shape sand'}
+      </button>
+      {sandBrush.enabled && <>
+        <div className="sand-tool-options" role="group" aria-label="Brush action">
+          {(['dig', 'push', 'smooth'] as SandTool[]).map((tool) => <button key={tool} type="button" aria-pressed={sandBrush.tool === tool}
+            onClick={() => useWellStore.getState().setSandTool(tool)}>{tool}</button>)}
+        </div>
+        <label>Brush size <input type="range" min="0.4" max="1" step="0.05" value={sandBrush.radius}
+          onChange={(event) => useWellStore.getState().setSandRadius(Number(event.target.value))} /></label>
+        <span>Press and drag near the well. Choose Done to scroll on touchscreens.</span>
+      </>}
+    </div>}
     {!reading && <motion.div className="scene-paper-wash" style={{ clipPath: aperture, opacity: paperWashOpacity }} aria-hidden="true" />}
     {!reading && <motion.div className="spatial-frame" style={{ top: frameTop, left: frameLeft, width: frameWidth, height: frameHeight, borderRadius: frameRound, opacity: frameOpacity }} aria-hidden="true" />}
-    <header className="site-header">
+    <header className="site-header" inert={cinematic}>
       <a className="wordmark" href="#opening" aria-label="wellwellwell — return to opening"><span aria-hidden="true">井</span></a>
       <nav aria-label="Essay chapters" className="flex items-center gap-4 md:gap-7">
         {story.map((chapter) => <a key={chapter.id} href={'#' + chapter.id} aria-label={`${chapter.number} ${chapter.label}`} aria-current={active === chapter.id ? 'location' : undefined}><span>{chapter.number}</span><span className="nav-label">{chapter.label}</span></a>)}
@@ -130,15 +195,17 @@ export default function App() {
     </header>
     <motion.div className="reading-progress" style={{ scaleX: scrollYProgress }} aria-hidden="true" />
     <section ref={openingRef} className="opening" id="opening" aria-labelledby="opening-title" data-scene-name={openingScene.id} style={reading ? undefined : { height: OPENING_SCROLL_HEIGHT }}>
-      <div className="opening-frame">
+      <div className="opening-frame" inert={cinematic}>
       <motion.p className="opening-sky-cue" style={reading ? undefined : { opacity: skyCueOpacity }}>Look up at the stars, then approach the well <span aria-hidden="true">↓</span></motion.p>
-      <motion.div style={reading ? undefined : { opacity: openingWordsOpacity }}><div className="eyebrow">关于一口井，以及井边的人 / A SPATIAL ESSAY</div></motion.div>
-      <h1 id="opening-title">{story.map((chapter, index) => <PixelTitleLink key={chapter.id} href={'#' + chapter.id}
-        meaning={['看', '身体与声音', '他者'][index]} detail={['意象与像素', '发声与倾听', '相遇与回应'][index]} />)}</h1>
-      <motion.div style={reading ? undefined : { opacity: openingWordsOpacity }}>
+      <motion.div><div className="eyebrow">关于一口井，以及井边的人 / A SPATIAL ESSAY</div></motion.div>
+      <h1 id="opening-title">{story.map((chapter, index) => <PixelTitleWord key={chapter.id}
+        meaning={['看', '身体与声音', '他者'][index]} detail={['意象与像素', '发声与倾听', '相遇与回应'][index]}
+        automatic={!reading && openingScene.id === TITLE_GLOW_SCENES[index]}
+        exited={!reading && openingScene.id === 'arrival'} />)}</h1>
+      <motion.div>
       <p className="opening-caption">一口像素化的井。<br />三次停顿。一次重新靠近。</p>
       <a href="#seeing" className="begin-link">Follow the words to the well <span aria-hidden="true">↓</span></a>
-      {!reading && <motion.p className="sand-cue" style={{ opacity: sandCueOpacity }}>Move over the sand to dig. On touchscreens, press and drag.</motion.p>}
+      {!reading && <motion.p className="sand-cue" style={{ opacity: sandCueOpacity }}>Choose Shape sand, then press and drag near the well.</motion.p>}
       </motion.div>
       <span className="drawing-note">{openingScene.name}</span>
       </div>
@@ -160,11 +227,11 @@ export default function App() {
           {index === 2 && <div className="encounter-panel">
             <p className="path-caption">Invite someone beside you to respond.</p>
             <div className="flex flex-wrap gap-3">
-              <button className="encounter-button" aria-pressed={called} onClick={() => { setCalled(true); setHeard(false) }}>I’m here.</button>
-              <button className="encounter-button" disabled={!called || heard} aria-pressed={heard} onClick={() => setHeard(true)}>I hear you.</button>
+              <button className="encounter-button" aria-pressed={called} onClick={() => useWellStore.getState().callOther()}>I’m here.</button>
+              <button className="encounter-button" disabled={!called || heard} aria-pressed={heard} onClick={() => useWellStore.getState().hearOther()}>I hear you.</button>
             </div>
             <p role="status">{heard ? 'One voice, one response. Put down the screen and keep talking if you like.' : called ? 'Invite someone beside you to answer.' : 'A two-person exercise on one device. You can also try it alone.'}</p>
-            {called && <button className="reset-button" onClick={() => { setCalled(false); setHeard(false) }}>Start the conversation again ↺</button>}
+            {called && <button className="reset-button" onClick={() => useWellStore.getState().resetEncounter()}>Start the conversation again ↺</button>}
           </div>}
           <blockquote>{chapter.question}</blockquote>
         </motion.div>
@@ -187,9 +254,10 @@ export default function App() {
         <span className="closing-scene-note" aria-hidden="true">AT THE WELL / ALWAYS</span>
       </div>
     </section>
-    <aside className="reading-controls" aria-label="Reading and sound settings">
+    <aside className="reading-controls" aria-label="Reading and sound settings" inert={cinematic}>
       <button onClick={sound.toggleMuted} aria-pressed={sound.muted}>{sound.muted ? 'SOUND: OFF' : 'SOUND: ON'}</button>
-      <button onClick={() => setReading((value) => !value)} aria-pressed={reading}>{reading ? 'ENABLE 3D' : 'TEXT ONLY'}</button>
+      <button onClick={() => useWellStore.getState().toggleReading()} aria-pressed={reading}>{reading ? 'ENABLE 3D' : 'TEXT ONLY'}</button>
     </aside>
+    {!reading && !loaderDismissed && <LoadingScreen />}
   </main>
 }

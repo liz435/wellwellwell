@@ -1,19 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
+import { useWellStore } from './useWellStore'
 
 /** Synthesized web interpretation, not an installation recording. */
 export function useWellSound() {
   const context = useRef<AudioContext | null>(null)
   const master = useRef<GainNode | null>(null)
-  const mutedRef = useRef(false)
-  const [muted, setMuted] = useState(false)
-  const [unavailable, setUnavailable] = useState(false)
+  const muted = useWellStore((state) => state.muted)
+  const unavailable = useWellStore((state) => state.soundUnavailable)
   const play = useCallback(async () => {
-    if (mutedRef.current) return
+    if (useWellStore.getState().muted) return
     try {
       context.current ??= new AudioContext()
       const audio = context.current
       await audio.resume()
-      if (audio.state !== 'running' || mutedRef.current) return
+      if (audio.state !== 'running' || useWellStore.getState().muted) return
       if (!master.current) {
         master.current = audio.createGain()
         master.current.gain.value = 0.16
@@ -36,16 +36,16 @@ export function useWellSound() {
         oscillator.start(start)
         oscillator.stop(start + 1.15)
       })
-      setUnavailable(false)
-    } catch { setUnavailable(true) }
+      useWellStore.getState().setSoundUnavailable(false)
+    } catch { useWellStore.getState().setSoundUnavailable(true) }
   }, [])
   const playSand = useCallback(async () => {
-    if (mutedRef.current) return
+    if (useWellStore.getState().muted) return
     try {
       context.current ??= new AudioContext()
       const audio = context.current
       await audio.resume()
-      if (audio.state !== 'running' || mutedRef.current) return
+      if (audio.state !== 'running' || useWellStore.getState().muted) return
       if (!master.current) {
         master.current = audio.createGain()
         master.current.gain.value = 0.16
@@ -71,12 +71,12 @@ export function useWellSound() {
       source.onended = () => { source.disconnect(); filter.disconnect(); envelope.disconnect() }
       source.start(start)
       source.stop(start + duration)
-    } catch { setUnavailable(true) }
+    } catch { useWellStore.getState().setSoundUnavailable(true) }
   }, [])
   const toggleMuted = () => {
-    mutedRef.current = !mutedRef.current
-    setMuted(mutedRef.current)
-    if (master.current && context.current) master.current.gain.setTargetAtTime(mutedRef.current ? 0 : 0.16, context.current.currentTime, 0.02)
+    const nextMuted = !useWellStore.getState().muted
+    useWellStore.getState().setMuted(nextMuted)
+    if (master.current && context.current) master.current.gain.setTargetAtTime(nextMuted ? 0 : 0.16, context.current.currentTime, 0.02)
   }
   useEffect(() => {
     const pause = () => { if (document.hidden) void context.current?.suspend() }
